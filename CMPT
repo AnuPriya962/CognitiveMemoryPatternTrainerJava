@@ -1,0 +1,405 @@
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.util.Random;
+import java.util.List;
+import java.util.ArrayList;
+
+public class CognitivePatternMemoryTrainer {
+
+    // ------------------------- Models -------------------------
+    static abstract class PatternElement implements Serializable {
+        abstract String display();
+        abstract String value();
+    }
+
+    static class NumberElement extends PatternElement {
+        private final int number;
+        NumberElement(int number) { this.number = number; }
+        @Override String display() { return Integer.toString(number); }
+        @Override String value() { return Integer.toString(number); }
+    }
+
+    static class ColorElement extends PatternElement {
+        private final String colorName;
+        ColorElement(String colorName){ this.colorName = colorName; }
+        @Override String display() { return colorName; }
+        @Override String value() { return colorName; }
+    }
+
+    static class SymbolElement extends PatternElement {
+        private final String symbol;
+        SymbolElement(String symbol){ this.symbol = symbol; }
+        @Override String display() { return symbol; }
+        @Override String value() { return symbol; }
+    }
+
+    static class SequencePattern implements Serializable {
+        private final List<PatternElement> sequence;
+        SequencePattern(List<PatternElement> seq){ this.sequence = seq; }
+        List<PatternElement> getSequence(){ return sequence; }
+        boolean validate(List<String> inputs){
+            if(inputs.size() != sequence.size()) return false;
+            for(int i=0;i<sequence.size();i++){
+                String expected = sequence.get(i).value().trim().toLowerCase();
+                String got = inputs.get(i).trim().toLowerCase();
+                if(!expected.equals(got)) return false;
+            }
+            return true;
+        }
+    }
+
+    static class Player implements Serializable {
+        int highScore = 0;
+        int score = 0;
+        String difficulty = "Easy";
+    }
+
+    static class Persistence {
+        private static final String SAVE_FILE = System.getProperty("user.home") + File.separator + ".cognitive_trainer_save";
+        static void savePlayer(Player p){
+            try(ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(SAVE_FILE))){
+                oos.writeObject(p);
+            }catch(Exception ignored){}
+        }
+        static Player loadPlayer(){
+            File f = new File(SAVE_FILE);
+            if(!f.exists()) return new Player();
+            try(ObjectInputStream ois = new ObjectInputStream(new FileInputStream(f))){
+                Object o = ois.readObject();
+                if(o instanceof Player) return (Player)o;
+            }catch(Exception ignored){}
+            return new Player();
+        }
+    }
+
+    // ------------------------- UI -------------------------
+    static class GradientPanel extends JPanel{
+        private final Color c1, c2;
+        GradientPanel(Color c1, Color c2){ this.c1 = c1; this.c2 = c2; setOpaque(true); }
+        @Override protected void paintComponent(Graphics g){
+            super.paintComponent(g);
+            Graphics2D g2 = (Graphics2D)g;
+            GradientPaint gp = new GradientPaint(0,0,c1, getWidth(), getHeight(), c2);
+            g2.setPaint(gp);
+            g2.fillRect(0,0,getWidth(),getHeight());
+        }
+    }
+
+    static class FancyButton extends JButton {
+        private float scale = 1.0f;
+        FancyButton(String text){
+            super(text);
+            setFocusPainted(false);
+            setBorderPainted(false);
+            setContentAreaFilled(false);
+            setOpaque(true);
+            setBackground(new Color(255,255,255,180));
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setFont(getFont().deriveFont(Font.BOLD, 16f));
+            addMouseListener(new MouseAdapter(){
+                @Override public void mouseEntered(MouseEvent e){ animate(1.06f); }
+                @Override public void mouseExited(MouseEvent e){ animate(1.0f); }
+            });
+        }
+        private void animate(float target){
+            javax.swing.Timer t = new javax.swing.Timer(12, null);
+            t.addActionListener(ev -> {
+                if(Math.abs(scale - target) < 0.01f){ scale = target; repaint(); t.stop(); return; }
+                scale += (target - scale) * 0.25f;
+                repaint();
+            });
+            t.start();
+        }
+        @Override protected void paintComponent(Graphics g){
+            Graphics2D g2 = (Graphics2D)g.create();
+            int w = getWidth(); int h = getHeight();
+            int sw = (int)(w*scale); int sh = (int)(h*scale);
+            int sx = (w - sw)/2; int sy = (h - sh)/2;
+            if(scale > 1.01f){
+                g2.setColor(new Color(255,255,255,90));
+                g2.fillRoundRect(sx-6, sy-6, sw+12, sh+12, 20,20);
+            }
+            g2.setColor(getBackground());
+            g2.fillRoundRect(sx, sy, sw, sh, 14,14);
+            g2.setColor(Color.BLACK);
+            g2.setFont(getFont());
+            FontMetrics fm = g2.getFontMetrics();
+            g2.drawString(getText(), sx+(sw-fm.stringWidth(getText()))/2, sy+((sh-fm.getHeight())/2)+fm.getAscent());
+            g2.dispose();
+        }
+    }
+
+    static class GameFrame extends JFrame {
+        private final CardLayout cardLayout = new CardLayout();
+        private final JPanel cardPanel = new JPanel(cardLayout);
+        private final Player player;
+        GameFrame(Player savedPlayer){
+            super("Cognitive Pattern Memory Trainer 🧠");
+            this.player = savedPlayer;
+            setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            setSize(1000,650);
+            setLocationRelativeTo(null);
+            cardPanel.add(new MainMenu(this), "menu");
+            cardPanel.add(new GamePage(this), "game");
+            add(cardPanel);
+            showMenu();
+        }
+        void showMenu(){ cardLayout.show(cardPanel, "menu"); }
+        void showGame(){ cardLayout.show(cardPanel, "game"); }
+        Player getPlayer(){ return player; }
+    }
+
+    static class MainMenu extends GradientPanel {
+        MainMenu(GameFrame parent){
+            super(new Color(255,200,215), new Color(170,150,240));
+            setLayout(new GridBagLayout());
+            JLabel title = new JLabel("Cognitive Pattern Memory Trainer");
+            title.setFont(loadGameFont().deriveFont(Font.BOLD, 36f));
+            title.setForeground(Color.white);
+            FancyButton start = new FancyButton("Let's Start");
+            start.setFont(loadGameFont().deriveFont(Font.BOLD, 22f));
+            start.addActionListener(e -> parent.showGame());
+            JPanel box = new JPanel();
+            box.setOpaque(false);
+            box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
+            box.add(title);
+            box.add(Box.createRigidArea(new Dimension(0,18)));
+            box.add(start);
+            add(box);
+        }
+    }
+
+    static class GamePage extends GradientPanel {
+        private final GameFrame parent;
+        private final Player player;
+        private final JLabel scoreLabel = new JLabel();
+        private final JLabel highScoreLabel = new JLabel();
+        private final JLabel feedbackLabel = new JLabel(" ");
+        private final JPanel centerPanel = new JPanel(new FlowLayout());
+        private final FancyButton showSeqBtn = new FancyButton("Show Sequence");
+        private final FancyButton checkBtn = new FancyButton("Check Answer");
+        private final FancyButton restartBtn = new FancyButton("Restart Game");
+        private List<PatternElement> currentSequence = new ArrayList<>();
+        private final List<JTextField> answerFields = new ArrayList<>();
+        private final Random rnd = new Random();
+
+        // New difficulty variables
+        private int sequenceLength = 3;
+        private int correctStreak = 0;
+
+        GamePage(GameFrame parent){
+            super(new Color(255,200,215), new Color(170,150,240));
+            this.parent = parent;
+            this.player = parent.getPlayer();
+            setLayout(new BorderLayout());
+            buildTop();
+            buildCenter();
+            buildBottom();
+            resetScore();
+            addComponentListener(new ComponentAdapter(){
+                public void componentShown(ComponentEvent e){ SwingUtilities.invokeLater(() -> startRoundWithCountdown()); }
+            });
+        }
+
+        private void buildTop(){
+            JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT,20,10));
+            top.setOpaque(false);
+            scoreLabel.setFont(loadGameFont().deriveFont(Font.BOLD, 18f));
+            highScoreLabel.setFont(loadGameFont().deriveFont(Font.PLAIN, 16f));
+            top.add(scoreLabel);
+            top.add(highScoreLabel);
+            JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            right.setOpaque(false);
+            feedbackLabel.setFont(loadGameFont().deriveFont(Font.BOLD, 18f));
+            right.add(feedbackLabel);
+            JPanel container = new JPanel(new BorderLayout());
+            container.setOpaque(false);
+            container.add(top, BorderLayout.WEST);
+            container.add(right, BorderLayout.EAST);
+            add(container, BorderLayout.NORTH);
+        }
+
+        private void buildCenter(){
+            centerPanel.setOpaque(false);
+            add(centerPanel, BorderLayout.CENTER);
+        }
+
+        private void buildBottom(){
+            JPanel bottom = new JPanel();
+            bottom.setOpaque(false);
+            showSeqBtn.addActionListener(e -> showSequence());
+            checkBtn.addActionListener(e -> checkAnswer());
+            restartBtn.addActionListener(e -> resetGame());
+            bottom.add(showSeqBtn);
+            bottom.add(checkBtn);
+            bottom.add(restartBtn);
+            add(bottom, BorderLayout.SOUTH);
+        }
+
+        private void resetScore(){
+            player.score = 0;
+            correctStreak = 0;
+            sequenceLength = 3;
+            updateScoreUI();
+        }
+
+        private void resetGame(){
+            resetScore();
+            feedbackLabel.setText(" ");
+            startRoundWithCountdown();
+        }
+
+        private void updateScoreUI(){
+            scoreLabel.setText("Score: " + player.score);
+            highScoreLabel.setText("High Score: " + player.highScore);
+        }
+
+        private void startRoundWithCountdown(){
+            feedbackLabel.setText(" ");
+            centerPanel.removeAll();
+            JLabel countdown = new JLabel("3", SwingConstants.CENTER);
+            countdown.setFont(loadGameFont().deriveFont(Font.BOLD, 72f));
+            countdown.setForeground(Color.white);
+            centerPanel.add(countdown);
+            centerPanel.revalidate();
+            centerPanel.repaint();
+
+            javax.swing.Timer t = new javax.swing.Timer(1000, null);
+            t.setRepeats(true);
+            final int[] count = {3};
+            t.addActionListener(e -> {
+                count[0]--;
+                if(count[0] <= 0){
+                    t.stop();
+                    centerPanel.removeAll();
+                    centerPanel.revalidate();
+                    centerPanel.repaint();
+                    startRound();
+                } else {
+                    countdown.setText(String.valueOf(count[0]));
+                    countdown.revalidate();
+                    countdown.repaint();
+                }
+            });
+            t.start();
+        }
+
+        private void startRound(){
+            currentSequence = generateSequence(sequenceLength);
+            showSequenceForMs(2000);
+        }
+
+        private List<PatternElement> generateSequence(int length){
+            List<PatternElement> seq = new ArrayList<>();
+            String[] colors = {"Red","Blue","Green","Yellow","Purple","Orange"};
+            String[] symbols = {"@","#","$","%","&","*","!"};
+            for(int i=0;i<length;i++){
+                int type = rnd.nextInt(3);
+                if(type==0) seq.add(new NumberElement(rnd.nextInt(90)+10));
+                else if(type==1) seq.add(new ColorElement(colors[rnd.nextInt(colors.length)]));
+                else seq.add(new SymbolElement(symbols[rnd.nextInt(symbols.length)]));
+            }
+            return seq;
+        }
+
+        private void showSequenceForMs(int ms){
+            centerPanel.removeAll();
+            answerFields.clear();
+            JPanel row = new JPanel(new FlowLayout(FlowLayout.CENTER,12,12));
+            row.setOpaque(false);
+            for(PatternElement pe : currentSequence){
+                JLabel lbl = new JLabel(pe.display(), SwingConstants.CENTER);
+                lbl.setFont(loadGameFont().deriveFont(Font.BOLD, 28f));
+                lbl.setOpaque(true);
+                lbl.setBackground(new Color(255,255,255,200));
+                lbl.setBorder(BorderFactory.createEmptyBorder(10,14,10,14));
+                row.add(lbl);
+            }
+            centerPanel.add(row);
+            centerPanel.revalidate();
+            centerPanel.repaint();
+
+            javax.swing.Timer t = new javax.swing.Timer(ms, null);
+            t.setRepeats(false);
+            t.addActionListener(e -> { ((javax.swing.Timer)e.getSource()).stop(); showAnswerFields(); });
+            t.start();
+        }
+
+        private void showAnswerFields(){
+            centerPanel.removeAll();
+            answerFields.clear();
+            JPanel row = new JPanel(new FlowLayout(FlowLayout.CENTER,12,12));
+            row.setOpaque(false);
+            for(int i=0;i<currentSequence.size();i++){
+                JTextField tf = new JTextField(6);
+                tf.setFont(loadGameFont().deriveFont(Font.BOLD, 22f));
+                tf.setHorizontalAlignment(SwingConstants.CENTER);
+                answerFields.add(tf);
+                row.add(tf);
+            }
+            centerPanel.add(row);
+            if(!answerFields.isEmpty()) answerFields.get(0).requestFocusInWindow();
+            centerPanel.revalidate();
+            centerPanel.repaint();
+        }
+
+        private void showSequence(){ 
+            if(currentSequence!=null && !currentSequence.isEmpty()) showSequenceForMs(1500); 
+        }
+
+        private void checkAnswer(){
+            if(currentSequence==null || currentSequence.isEmpty()) return;
+            List<String> inputs = new ArrayList<>();
+            for(JTextField tf : answerFields) inputs.add(tf.getText());
+            SequencePattern sp = new SequencePattern(currentSequence);
+            boolean correct = sp.validate(inputs);
+
+            if(correct){
+                player.score += currentSequence.size()*10;
+                correctStreak++;
+
+                if(correctStreak % 3 == 0 && sequenceLength < 10){
+                    sequenceLength++;
+                    feedbackLabel.setText("Level Up! 🌟 Sequence length: " + sequenceLength);
+                } else {
+                    feedbackLabel.setText("You're Correct ✅");
+                }
+                feedbackLabel.setForeground(new Color(30,200,100));
+                if(player.score > player.highScore) player.highScore = player.score;
+            } else {
+                feedbackLabel.setText("Try Again ❌");
+                feedbackLabel.setForeground(new Color(220,80,80));
+                correctStreak = 0;
+                sequenceLength = 3;
+            }
+
+            updateScoreUI();
+            Persistence.savePlayer(player);
+
+            javax.swing.Timer t = new javax.swing.Timer(1200, null);
+            t.setRepeats(false);
+            t.addActionListener(e -> { ((javax.swing.Timer)e.getSource()).stop(); startRoundWithCountdown(); });
+            t.start();
+        }
+    }
+
+    private static Font loadGameFont(){
+        try{
+            File f = new File("Coddex.ttf");
+            if(f.exists()) return Font.createFont(Font.TRUETYPE_FONT, f);
+        }catch(Exception ignored){}
+        return new Font("SansSerif", Font.PLAIN, 14);
+    }
+
+    public static void main(String[] args){
+        SwingUtilities.invokeLater(() -> {
+            Player p = Persistence.loadPlayer();
+            GameFrame gf = new GameFrame(p);
+            gf.setVisible(true);
+        });
+    }
+}
